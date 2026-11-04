@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101a30"><title>LAICA PS7002 • BLE Test</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;background:#0b1222;color:#eaf1ff;line-height:1.45}main{max-width:690px;margin:auto;padding:24px 16px 60px}h1{font-size:25px;margin:4px 0 6px}h2{font-size:17px;margin:0 0 14px}p{color:#abb9d4;margin:8px 0 16px}.sub{font-size:13px}.card{background:#162139;border:1px solid #30415d;border-radius:18px;padding:18px;margin:14px 0}.tag{display:inline-flex;padding:5px 10px;border-radius:40px;background:#293b54;font-size:12px;font-weight:650}.live{color:#56dfae}.warn{color:#ffc671}.bad{color:#ff9595}.value{font-size:40px;font-weight:750;letter-spacing:-1px;font-variant-numeric:tabular-nums}.smallval{font-size:26px;font-weight:680}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.metric{background:#0d172b;padding:14px;border-radius:13px}.metric label{display:block;color:#a7bad6;font-size:12px;margin-bottom:5px}button{border:0;background:#448bf9;color:white;border-radius:11px;padding:13px 16px;font-weight:700;font-size:15px;cursor:pointer}button.secondary{background:#33445f}button:disabled{opacity:.45}button+button{margin-left:6px}.buttons{display:flex;flex-wrap:wrap;gap:8px}.buttons button+button{margin:0}pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:anywhere;white-space:pre-wrap}pre{background:#0b1426;padding:12px;border-radius:10px;max-height:210px;overflow:auto}input{background:#0b1426;color:white;border:1px solid #4a5d7c;border-radius:9px;padding:12px;width:100%;font-family:monospace}hr{border:0;border-top:1px solid #30415d;margin:16px 0}.foot{color:#9fb1cd;font-size:12px}
+</style></head>
+<body><main>
+<div class="tag">PROTOTIPO • Solo test, nessun dato inviato</div>
+<h1>LAICA PS7002</h1><p>Scanner Bluetooth per iPhone / Safari + beacio. La pagina non usa Home Assistant, account o servizi cloud.</p>
+<div class="card"><h2>1. Bluetooth</h2><p id="support">Controllo supporto in corso…</p><div class="buttons"><button id="start">Avvia scansione</button><button id="stop" class="secondary" disabled>Interrompi</button></div><p id="state" class="sub">In attesa di avvio.</p><p class="sub">Tieni Safari aperto e in primo piano. Sali sulla bilancia durante la scansione. Non serve effettuare pairing.</p></div>
+<div class="card"><h2>2. Ultima misurazione</h2><div class="grid"><div class="metric"><label>Peso</label><div class="value" id="weight">—</div></div><div class="metric"><label>Impedenza</label><div class="smallval" id="impedance">—</div></div><div class="metric"><label>Stato</label><strong id="phase">—</strong></div><div class="metric"><label>Checksum</label><strong id="checksum">—</strong></div></div><p class="sub" id="details">Nessun pacchetto ricevuto.</p><div class="sub">Pacchetti validi: <strong id="count">0</strong> · Ultima ricezione: <strong id="last">—</strong></div></div>
+<div class="card"><h2>3. Diagnostica</h2><p class="sub">Il log include eventuali dispositivi non riconosciuti e gli errori Bluetooth (massimo 60 righe).</p><pre id="log">Pronto.</pre><div class="buttons"><button class="secondary" id="copy">Copia diagnostica</button><button class="secondary" id="clear">Pulisci log</button></div></div>
+<div class="card"><h2>4. Prova offline (senza Bluetooth)</h2><p class="sub">Prima premi “Prova pacchetto 86”: deve comparire <b>85,9 kg</b>, <b>591 Ω</b> e <b>checksum OK</b>.</p><button id="sample">Prova pacchetto 86</button><hr><p class="sub">Puoi anche incollare il manufacturer data copiato da nRF (con o senza &lt;A102&gt;).</p><input id="hex" value="&lt;A102&gt; 09FF 035B 024F 86FF FF21 FFAA" spellcheck="false" autocapitalize="off" aria-label="Pacchetto esadecimale"><div style="margin-top:10px"><button class="secondary" id="decode">Decodifica testo</button></div></div>
+<p class="foot">Il peso e l’impedenza mostrati sono valori ricevuti dalla bilancia. Nessuna percentuale di grasso viene calcolata in questa prima versione. Nessun salvataggio automatico delle misurazioni.</p>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);let scan=null,received=0,logs=[],seen=new Map();
+function log(s){const line=new Date().toLocaleTimeString('it-IT')+'  '+s;logs.unshift(line);logs=logs.slice(0,60);$('log').textContent=logs.join('\n');}
+function hex(bytes){return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join(' ').toUpperCase()}
+function bytesOf(d){if(!d)return null; if(d instanceof DataView)return new Uint8Array(d.buffer,d.byteOffset,d.byteLength);if(d instanceof ArrayBuffer)return new Uint8Array(d); if(ArrayBuffer.isView(d))return new Uint8Array(d.buffer,d.byteOffset,d.byteLength);if(Array.isArray(d))return Uint8Array.from(d);return null}
+function decode(raw){const b=bytesOf(raw);if(!b||b.length!==14)return {error:'Lunghezza inattesa: '+(b?b.length:'nessuna')+' byte (attesi 14 compresi i 2 byte del manufacturer ID)'};
+if(b[0]!==0x02||b[1]!==0xA1||b[2]!==0x09||b[3]!==0xFF||b[13]!==0xAA)return {error:'Header/manufacturer/terminatore non compatibile con PS7002'};
+const calc=b.slice(0,12).reduce((a,v)=>a+v,0)&255;
+const rawW=(b[4]<<8)|b[5],z=(b[6]<<8)|b[7],status=b[8],mode=b[11];
+const precision=mode===0x22?100:10;
+return {weight:rawW/precision,z:z===65535?null:z,status,mode,check:calc===b[12],expected:calc,actual:b[12],raw:hex(b),phase:status===0x86?'BIA completa':status===0x82?'Peso stabile':status===0x80?'Misurazione in corso':'Stato 0x'+status.toString(16).toUpperCase()};}
+function show(d,source){if(d.error){log('Scarto ('+source+'): '+d.error);return}if(!d.check){log('Checksum ERRATO ('+source+'): '+d.raw);return}
+received++;$('count').textContent=String(received);$('weight').textContent=d.weight.toFixed(1).replace('.',',')+' kg';$('impedance').textContent=d.z===null?'Non disponibile':d.z+' Ω';$('phase').textContent=d.phase;$('checksum').textContent='OK (0x'+d.actual.toString(16).toUpperCase().padStart(2,'0')+')';$('last').textContent=new Date().toLocaleTimeString('it-IT');$('details').textContent='Fonte: '+source+' · Status 0x'+d.status.toString(16).toUpperCase()+' · Mode 0x'+d.mode.toString(16).toUpperCase();log('PS7002 '+d.weight.toFixed(1)+' kg / '+(d.z===null?'—':d.z+' Ω')+' / '+d.phase+' | '+d.raw);}
+function fromString(s){const t=s.trim();const m=t.match(/<\s*A102\s*>/i);let str=t.replace(/<\s*A102\s*>/ig,'').replace(/[^0-9a-fA-F]/g,'');if(str.length%2)throw Error('Numero dispari di cifre esadecimali');let b=Uint8Array.from(str.match(/.{2}/g)?.map(x=>parseInt(x,16))||[]);if(m)b=Uint8Array.from([0x02,0xA1,...b]);if(b.length===12&&b[0]===0x09&&b[1]===0xFF)b=Uint8Array.from([0x02,0xA1,...b]);return b;}
+$('sample').onclick=()=>show(decode(fromString('<A102> 09FF 035B 024F 86FF FF21 FFAA')),'campione offline');
+$('decode').onclick=()=>{try{show(decode(fromString($('hex').value)),'testo incollato')}catch(e){log('Input errato: '+e.message)}};
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText('LAICA BLE Test\n'+logs.join('\n'));log('Diagnostica copiata')}catch(e){log('Copia non riuscita: '+e.message)}};
+$('clear').onclick=()=>{logs=[];seen.clear();$('log').textContent='Log pulito.'};
+function onAdvertisement(event){try{const n=event.device?.name||event.name||'(senza nome)';const data=event.manufacturerData;let found=false;
+if(data&&typeof data.entries==='function'){for(const [key,val] of data.entries()){const b=bytesOf(val);const k=typeof key==='number'?key.toString(16):String(key);if(!b)continue;const entry='['+k+'] '+hex(b);if((Number(key)===0xA102||Number(key)===0x02A1||n.toLowerCase().includes('yohealth'))&&b.length>=12){const full=b.length===14?b:Uint8Array.from([0x02,0xA1,...b]);const d=decode(full);if(!d.error){show(d,'BLE '+n);found=true}else log('Dato candidato '+entry+' '+d.error)}else if(!seen.has(n+entry)){seen.set(n+entry,true);log('Annuncio '+n+' manufacturer '+entry)}}}
+if(!found&&(!data||data.size===0)){const id=n+':no-mfg';if(!seen.has(id)){seen.set(id,true);log('Visto '+n+' (nessun manufacturer data)')}}
+}catch(e){log('Errore lettura evento: '+e.message)}}
+function stopScan(){try{if(scan?.active)scan.stop();else scan?.stop?.()}catch(e){log('Stop: '+e.message)}scan=null;$('start').disabled=false;$('stop').disabled=true;$('state').textContent='Scansione interrotta.';}
+$('stop').onclick=stopScan;
+$('start').onclick=async()=>{if(!navigator.bluetooth||typeof navigator.bluetooth.requestLEScan!=='function'){log('requestLEScan non disponibile: controlla beacio/HTTPS');return}try{$('state').textContent='Richiesta permesso Bluetooth…';// Su alcuni browser acceptAllAdvertisements permette di vedere broadcaster senza servizi GATT.
+scan=await navigator.bluetooth.requestLEScan({acceptAllAdvertisements:true,keepRepeatedDevices:true});$('start').disabled=true;$('stop').disabled=false;$('state').textContent='Scansione attiva: ora sali sulla bilancia.';log('Scansione BLE avviata.');
+}catch(e){$('state').textContent='Errore: '+e.name+' — '+e.message;log('ERRORE scansione '+e.name+': '+e.message);stopScan();$('state').textContent='Errore: '+e.name+' — '+e.message}}
+if(navigator.bluetooth?.addEventListener)navigator.bluetooth.addEventListener('advertisementreceived',onAdvertisement);
+window.addEventListener('pagehide',stopScan);
+(function init(){let ok=!!navigator.bluetooth,scanok=typeof navigator.bluetooth?.requestLEScan==='function';$('support').innerHTML=ok?(scanok?'<span class="live">✓ Web Bluetooth e requestLEScan disponibili</span>':'<span class="warn">⚠ Web Bluetooth presente, ma requestLEScan assente</span>'):'<span class="bad">✕ Web Bluetooth non disponibile: abilita beacio in Safari su sito HTTPS</span>';
+if(!window.isSecureContext)log('ATTENZIONE: pagina non in contesto sicuro, serve HTTPS');log('Supporto navigator.bluetooth='+ok+'; requestLEScan='+scanok+'; secureContext='+window.isSecureContext);})();
+</script></body></html>
